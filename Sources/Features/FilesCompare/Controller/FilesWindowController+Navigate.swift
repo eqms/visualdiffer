@@ -61,7 +61,7 @@ extension FilesWindowController {
                 self.showOSDTop(!navigateToNext)
                 return false
             }
-            if !self.alertSaveDirtyFiles() {
+            if !self.autoSaveDirtyFiles() {
                 return false
             }
             // the document is marked as dirty when we set the sessionDiff properties

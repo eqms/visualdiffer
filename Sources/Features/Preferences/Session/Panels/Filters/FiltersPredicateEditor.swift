@@ -24,7 +24,7 @@ class FiltersPredicateEditor: NSPredicateEditor {
     private func setupViews() {
         rowHeight = 25.0
         autoresizingMask = [.width, .height]
-        canRemoveAllRows = false
+        canRemoveAllRows = true
         nestingMode = .compound
 
         rowTemplates = [

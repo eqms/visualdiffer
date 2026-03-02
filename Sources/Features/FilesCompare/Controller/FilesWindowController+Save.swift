@@ -107,6 +107,23 @@ extension FilesWindowController {
         )
     }
 
+    /// Automatically saves dirty files without showing a dialog.
+    /// Returns false if a save error occurs.
+    func autoSaveDirtyFiles() -> Bool {
+        do {
+            if leftView.isDirty {
+                try saveView(leftView)
+            }
+            if rightView.isDirty {
+                try saveView(rightView)
+            }
+            return true
+        } catch {
+            NSAlert(error: error).runModal()
+            return false
+        }
+    }
+
     private func choosePath() -> URL? {
         let savePanel = NSSavePanel()
         savePanel.title = NSLocalizedString("Save File As", comment: "")
