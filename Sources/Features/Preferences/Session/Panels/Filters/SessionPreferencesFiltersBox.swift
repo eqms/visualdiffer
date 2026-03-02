@@ -7,6 +7,19 @@
 //
 
 class SessionPreferencesFiltersBox: PreferencesBox, NSMenuItemValidation {
+    private lazy var searchField: NSSearchField = {
+        let view = NSSearchField(frame: .zero)
+
+        view.placeholderString = NSLocalizedString("Filter Rules", comment: "")
+        view.translatesAutoresizingMaskIntoConstraints = false
+        view.target = self
+        view.action = #selector(searchFilters)
+        view.sendsWholeSearchString = false
+        view.sendsSearchStringImmediately = true
+
+        return view
+    }()
+
     private lazy var actionMenu: NSPopUpButton = {
         let view = NSPopUpButton(frame: .zero, pullsDown: true)
 
@@ -54,8 +67,12 @@ class SessionPreferencesFiltersBox: PreferencesBox, NSMenuItemValidation {
         return view
     }()
 
+    /// Stores the full predicate while search is active so saves always use the complete set
+    private var unfilteredPredicate: NSCompoundPredicate?
+
     private var currentFilters: String? {
-        (predicateEditor.objectValue as? NSPredicate)?.description
+        let predicate = unfilteredPredicate ?? (predicateEditor.objectValue as? NSCompoundPredicate)
+        return (predicate as NSPredicate?)?.description
     }
 
     override init(title: String) {
@@ -66,9 +83,17 @@ class SessionPreferencesFiltersBox: PreferencesBox, NSMenuItemValidation {
 
     private func setupViews() {
         if let contentView {
+            contentView.addSubview(searchField)
             contentView.addSubview(predicateEditorScrollView)
             contentView.addSubview(actionMenu)
         }
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(predicateEditorRowsDidChange),
+            name: NSRuleEditor.rowsDidChangeNotification,
+            object: predicateEditor
+        )
 
         setupConstraints()
     }
@@ -100,6 +125,12 @@ class SessionPreferencesFiltersBox: PreferencesBox, NSMenuItemValidation {
         )
         popupMenu.addItem(NSMenuItem.separator())
         popupMenu.addItem(
+            withTitle: NSLocalizedString("Sort Alphabetically", comment: ""),
+            action: #selector(sortAlphabetically),
+            keyEquivalent: ""
+        )
+        popupMenu.addItem(NSMenuItem.separator())
+        popupMenu.addItem(
             withTitle: NSLocalizedString("Copy to Clipboard", comment: ""),
             action: #selector(copyToClipboard),
             keyEquivalent: ""
@@ -122,6 +153,11 @@ class SessionPreferencesFiltersBox: PreferencesBox, NSMenuItemValidation {
             return
         }
         NSLayoutConstraint.activate([
+            searchField.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            searchField.centerYAnchor.constraint(equalTo: actionMenu.centerYAnchor),
+            searchField.trailingAnchor.constraint(lessThanOrEqualTo: actionMenu.leadingAnchor, constant: -8),
+            searchField.widthAnchor.constraint(greaterThanOrEqualToConstant: 150),
+
             actionMenu.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
             actionMenu.topAnchor.constraint(equalTo: contentView.topAnchor),
 
@@ -195,9 +231,107 @@ class SessionPreferencesFiltersBox: PreferencesBox, NSMenuItemValidation {
 
     @objc
     func fillWithDefaults(_: AnyObject) {
+        resetSearch()
         if let defaultFilters = SessionDiff.defaultFileFilters() {
             predicateEditor.objectValue = NSPredicate(format: defaultFilters)
         }
+    }
+
+    @objc
+    func sortAlphabetically(_: AnyObject) {
+        resetSearch()
+        guard let compound = predicateEditor.objectValue as? NSCompoundPredicate else {
+            return
+        }
+        guard let subs = compound.subpredicates as? [NSPredicate] else {
+            return
+        }
+        let sorted = subs.sorted { lhs, rhs in
+            sortKey(for: lhs).localizedCaseInsensitiveCompare(sortKey(for: rhs)) == .orderedAscending
+        }
+        let sortedCompound = NSCompoundPredicate(
+            type: compound.compoundPredicateType,
+            subpredicates: sorted
+        )
+        predicateEditor.objectValue = sortedCompound
+    }
+
+    @objc
+    func searchFilters(_ sender: NSSearchField) {
+        let query = sender.stringValue.trimmingCharacters(in: .whitespaces)
+
+        if query.isEmpty {
+            resetSearch()
+            return
+        }
+
+        // Minimum 3 characters required to trigger search
+        if query.count < 3 {
+            if unfilteredPredicate != nil {
+                resetSearch()
+            }
+            return
+        }
+
+        // On first search input, save the full predicate
+        if unfilteredPredicate == nil {
+            unfilteredPredicate = predicateEditor.objectValue as? NSCompoundPredicate
+        }
+
+        guard let fullPredicate = unfilteredPredicate,
+              let subs = fullPredicate.subpredicates as? [NSPredicate] else {
+            return
+        }
+
+        let filtered = subs.filter { sub in
+            sortKey(for: sub).localizedCaseInsensitiveContains(query)
+        }
+
+        // Always show at least the compound structure even if no matches
+        let filteredCompound = NSCompoundPredicate(
+            type: fullPredicate.compoundPredicateType,
+            subpredicates: filtered
+        )
+        predicateEditor.objectValue = filteredCompound
+    }
+
+    // MARK: - Search Helpers
+
+    private func resetSearch() {
+        if let saved = unfilteredPredicate {
+            predicateEditor.objectValue = saved
+            unfilteredPredicate = nil
+        }
+        searchField.stringValue = ""
+    }
+
+    /// Synchronizes unfilteredPredicate when rows are added or removed while search is active.
+    @objc
+    private func predicateEditorRowsDidChange(_: Notification) {
+        guard let fullPredicate = unfilteredPredicate,
+              let fullSubs = fullPredicate.subpredicates as? [NSPredicate],
+              let currentCompound = predicateEditor.objectValue as? NSCompoundPredicate,
+              let currentSubs = currentCompound.subpredicates as? [NSPredicate] else {
+            return
+        }
+
+        // Remove from unfilteredPredicate any subpredicates no longer present in the editor
+        let currentDescriptions = Set(currentSubs.map(\.description))
+        let updatedSubs = fullSubs.filter { currentDescriptions.contains($0.description) }
+
+        if updatedSubs.count != fullSubs.count {
+            unfilteredPredicate = NSCompoundPredicate(
+                type: fullPredicate.compoundPredicateType,
+                subpredicates: updatedSubs
+            )
+        }
+    }
+
+    private func sortKey(for predicate: Any) -> String {
+        if let comparison = predicate as? NSComparisonPredicate {
+            return comparison.rightExpression.constantValue as? String ?? ""
+        }
+        return (predicate as? NSPredicate)?.description ?? ""
     }
 
     // MARK: - NSMenuItemValidation
@@ -216,12 +350,16 @@ class SessionPreferencesFiltersBox: PreferencesBox, NSMenuItemValidation {
             } else {
                 false
             }
+        } else if action == #selector(sortAlphabetically) {
+            let compound = unfilteredPredicate ?? (predicateEditor.objectValue as? NSCompoundPredicate)
+            enabled = (compound?.subpredicates.count ?? 0) >= 2
         }
 
         return enabled
     }
 
     override func reloadData() {
+        resetSearch()
         if let str = delegate?.preferenceBox(self, stringForKey: .defaultFileFilters) {
             predicateEditor.objectValue = NSPredicate(format: str)
         } else {
