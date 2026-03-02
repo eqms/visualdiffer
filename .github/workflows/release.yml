@@ -1,0 +1,73 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer
+
+      - name: Setup signing configs
+        run: |
+          cp Signing-Template.xcconfig Signing.local.xcconfig
+          cp Versions-Template.xcconfig Versions.local.xcconfig
+          cp Signing-Template.xcconfig visdiff/Signing.local.xcconfig
+          cp Versions-Template.xcconfig visdiff/Versions.local.xcconfig
+          cp Signing-Template.xcconfig Tests/Signing.local.xcconfig
+          cp Versions-Template.xcconfig Tests/Versions.local.xcconfig
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Building version: $VERSION"
+
+      - name: Set version in config
+        run: |
+          echo "APP_VERSION = ${{ steps.version.outputs.version }}" > Versions.local.xcconfig
+          cp Versions.local.xcconfig visdiff/Versions.local.xcconfig
+          cp Versions.local.xcconfig Tests/Versions.local.xcconfig
+
+      - name: Build archive
+        run: |
+          xcodebuild archive \
+            -project VisualDiffer.xcodeproj \
+            -scheme VisualDiffer \
+            -archivePath build/VisualDiffer.xcarchive \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            ENABLE_HARDENED_RUNTIME=NO \
+            | tail -20
+
+      - name: Create ZIP
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent \
+            build/VisualDiffer.xcarchive/Products/Applications/VisualDiffer.app \
+            "build/VisualDiffer-${{ steps.version.outputs.version }}.zip"
+
+      - name: Calculate SHA256
+        id: sha256
+        run: |
+          SHA=$(shasum -a 256 "build/VisualDiffer-${{ steps.version.outputs.version }}.zip" | awk '{print $1}')
+          echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
+          echo "SHA256: $SHA"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "VisualDiffer v${{ steps.version.outputs.version }}"
+          generate_release_notes: true
+          files: "build/VisualDiffer-${{ steps.version.outputs.version }}.zip"

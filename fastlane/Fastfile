@@ -5,7 +5,6 @@ default_platform(:mac)
 require 'kramdown'
 require 'time'
 
-import "Sparkle"
 import "Linter"
 
 platform :mac do
@@ -34,7 +33,6 @@ platform :mac do
     notarize_app if ENV["NOTARIZE_ENABLED"] == "true"
     zip_app
     github if ENV["GITHUB_ENABLED"] == "true"
-    sparkle if ENV["SPARKLE_ENABLED"] == "true" && ENV["IS_PRERELEASE"] != "true"
     UI.success("🎉 Release completed")
   end
 
@@ -135,13 +133,6 @@ platform :mac do
   end
 
   def find_scheme
-    if ENV["SPARKLE_ENABLED"] == "true"
-      scheme = ENV["SPARKLE_SCHEME"] 
-
-      UI.user_error!("Scheme for sparkle not defined") if scheme.nil? || scheme.empty?
-      return scheme
-    end
-
     scheme = ENV["SCHEME"]
     UI.user_error!("Default Scheme not defined") if scheme.nil? || scheme.empty?
 
